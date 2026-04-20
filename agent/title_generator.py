@@ -38,11 +38,30 @@ def generate_title(user_message: str, assistant_response: str, timeout: float = 
         response = call_llm(
             task="title_generation",
             messages=messages,
-            max_tokens=30,
+            max_tokens=500,
             temperature=0.3,
             timeout=timeout,
         )
-        title = (response.choices[0].message.content or "").strip()
+        msg = response.choices[0].message
+        title = (msg.content or "").strip()
+        # Some reasoning models (e.g. mimo-v2-pro) output to the reasoning
+        # field instead of content when the token budget is tight.  Fall back
+        # to it when content is empty.
+        if not title:
+            reasoning = getattr(msg, "reasoning", None)
+            if reasoning:
+                import re
+                # First, look for quoted title candidates (model often lists
+                # options like: - "Weather Inquiry" - "Sunny Day Forecast")
+                quoted = re.findall(r'"([^"]{3,80})"', reasoning)
+                if quoted:
+                    title = quoted[-1]  # last quoted candidate is usually the pick
+                else:
+                    # Fall back to last non-empty line, stripped of markdown
+                    lines = [l.strip().lstrip("-*•").strip() for l in reasoning.strip().split("\n") if l.strip()]
+                    # Filter to lines that look title-like (short, capitalized)
+                    candidates = [l for l in lines if 3 <= len(l) <= 80 and not l.endswith((".", ",", ":"))]
+                    title = candidates[-1] if candidates else (lines[-1] if lines else "")
         # Clean up: remove quotes, trailing punctuation, prefixes like "Title: "
         title = title.strip('"\'')
         if title.lower().startswith("title:"):
